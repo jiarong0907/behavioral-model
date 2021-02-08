@@ -237,6 +237,34 @@ public:
     return entry_handle;
   }
 
+  void bm_mt_add_table(const int32_t cxt_id, const std::string& table_name) {
+    std::cout<<"Jiarong: Enter bm_mt_add_table table_name = "<<table_name<<std::endl;
+    LookupStructureFactory *lookup_factory = switch_->my_get_lookup_factory();
+    MatchErrorCode error_code = switch_->mt_add_table(cxt_id, table_name, lookup_factory);
+    if(error_code != MatchErrorCode::SUCCESS) {
+      InvalidTableOperation ito;
+      ito.code = get_exception_code(error_code);
+      throw ito;
+    }
+    // Logger::get()->trace("bm_table_add_entry");
+    // entry_handle_t entry_handle;
+    // std::vector<MatchKeyParam> params;
+    // build_match_key(params, match_key);
+    // ActionData data;
+    // for(const std::string &d : action_data) {
+    //   data.push_back_action_data(d.data(), d.size());
+    // }
+    // MatchErrorCode error_code = switch_->mt_add_table(
+    //     cxt_id, table_name, params, action_name,
+    //     std::move(data), &entry_handle, options.priority);
+    // if(error_code != MatchErrorCode::SUCCESS) {
+    //   InvalidTableOperation ito;
+    //   ito.code = get_exception_code(error_code);
+    //   throw ito;
+    // }
+    // return entry_handle;
+  }
+
   void bm_mt_set_default_action(const int32_t cxt_id, const std::string& table_name, const std::string& action_name, const BmActionData& action_data) {
     Logger::get()->trace("bm_set_default_action");
     ActionData data;
@@ -628,6 +656,7 @@ public:
   }
 
   void bm_mt_get_entries(std::vector<BmMtEntry> & _return, const int32_t cxt_id, const std::string& table_name) {
+    std::cout<<"Jiarong: Enter bm_mt_get_entries"<<std::endl;
     Logger::get()->trace("bm_mt_get_entries");
     switch (switch_->mt_get_type(cxt_id, table_name)) {
       case MatchTableType::NONE:

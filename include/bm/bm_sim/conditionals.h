@@ -50,6 +50,14 @@ class Conditional
     false_next = next_node;
   }
 
+  ControlFlowNode* get_true_next(){
+    return true_next;
+  }
+
+  ControlFlowNode* get_false_next(){
+    return false_next;
+  }
+
   // return pointer to next control flow node
   const ControlFlowNode *operator()(Packet *pkt) const override;
 

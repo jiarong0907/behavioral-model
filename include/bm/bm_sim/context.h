@@ -181,6 +181,9 @@ class Context final {
                int priority = -1  /*only used for ternary*/);
 
   MatchErrorCode
+  mt_add_table(const std::string &table_name, LookupStructureFactory *lookup_factory);
+
+  MatchErrorCode
   mt_set_default_action(const std::string &table_name,
                         const std::string &action_name,
                         ActionData action_data);

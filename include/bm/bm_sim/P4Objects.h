@@ -264,6 +264,14 @@ class P4Objects {
   // "<major>.<minor>"
   static std::string get_json_version_string();
 
+  void replace_actions();
+  void print_all_actions();
+  void print_all_tables();
+  void print_all_conditions();
+  void add_actions();
+  void replace_tables(LookupStructureFactory *);
+  // void replace_tables(LookupStructureFactory *, InitState *);
+
  private:
   // The get_*_cfg are used during json parsing: they will throw a
   // json_exception if the name cannot be resolved, which will lead to an error
@@ -315,6 +323,9 @@ class P4Objects {
   void add_match_action_table(const std::string &name,
                               std::unique_ptr<MatchActionTable> table);
 
+  void replace_match_action_table(const std::string &name,
+                              std::unique_ptr<MatchActionTable> table);
+
   void add_action_profile(const std::string &name,
                           std::unique_ptr<ActionProfile> action_profile);
 
@@ -323,14 +334,22 @@ class P4Objects {
   void add_conditional(const std::string &name,
                        std::unique_ptr<Conditional> conditional);
 
+  void replace_conditional(const std::string &name,
+                       std::unique_ptr<Conditional> conditional);
+
   void add_control_action(const std::string &name,
                           std::unique_ptr<ControlAction> control_action);
 
   void add_control_node(const std::string &name, ControlFlowNode *node);
 
+  void replace_control_node(const std::string &name, ControlFlowNode *node);
+
   ControlFlowNode *get_control_node_cfg(const std::string &name) const;
 
   void add_pipeline(const std::string &name,
+                    std::unique_ptr<Pipeline> pipeline);
+
+  void replace_pipeline(const std::string &name,
                     std::unique_ptr<Pipeline> pipeline);
 
   void add_meter_array(const std::string &name,

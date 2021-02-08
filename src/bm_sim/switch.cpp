@@ -182,6 +182,7 @@ int
 SwitchWContexts::init_objects(const std::string &json_path, device_id_t dev_id,
                               std::shared_ptr<TransportIface> transport) {
   std::ifstream fs(json_path, std::ios::in);
+  std::cout<<"Jiarong: the json_path = "<<json_path<<std::endl;
   if (!fs) {
     std::cout << "JSON input file " << json_path << " cannot be opened\n";
     return 1;

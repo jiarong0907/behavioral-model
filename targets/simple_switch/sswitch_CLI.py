@@ -122,6 +122,7 @@ class SimpleSwitchAPI(runtime_CLI.RuntimeAPI):
         print(self.sswitch_client.get_time_since_epoch_us())
 
 def main():
+    print("Jiarong: Enter sswitch_CLI.py")
     args = runtime_CLI.get_parser().parse_args()
 
     args.pre = runtime_CLI.PreType.SimplePreLAG

@@ -824,6 +824,17 @@ class SwitchWContexts : public DevMgr, public RuntimeInterface {
       cxt_id_t cxt_id, const std::string &calc_name,
       const CustomCrcMgr<uint32_t>::crc_config_t &crc32_config) override;
 
+  LookupStructureFactory *my_get_lookup_factory() const {
+    return lookup_factory ? lookup_factory.get() : &default_lookup_factory;
+  }
+
+  MatchErrorCode
+  mt_add_table(cxt_id_t cxt_id,
+               const std::string &table_name,
+               LookupStructureFactory *lookup_factory) {
+    return contexts.at(cxt_id).mt_add_table(table_name, lookup_factory);
+  }
+
   // ---------- End RuntimeInterface ----------
 
  protected:

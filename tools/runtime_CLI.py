@@ -2264,6 +2264,20 @@ class RuntimeAPI(cmd.Cmd):
         return self._complete_tables(text)
 
     @handle_bad_input
+    def do_add_table(self, line):
+        "Jiarong Add a new table into the pipeline: add_table <table name>"
+        args = line.split()
+        self.exactly_n_args(args, 1)
+        table_name = args[0]
+
+        # table = self.get_res("table", table_name, ResType.table)
+
+        self.client.bm_mt_add_table(0, table_name)
+
+    def complete_add_table(self, text, line, start_index, end_index):
+        return self._complete_tables(text)
+
+    @handle_bad_input
     def do_act_prof_dump_member(self, line):
         "Display some information about a member: act_prof_dump_member <action profile name> <member handle>"
         args = line.split()
@@ -2355,6 +2369,7 @@ class RuntimeAPI(cmd.Cmd):
 
     @handle_bad_input
     def do_table_dump(self, line):
+        print("Jiarong: Enter do_table_dump")
         "Display entries in a match-table: table_dump <table name>"
         args = line.split()
         self.exactly_n_args(args, 1)
@@ -2610,7 +2625,6 @@ class RuntimeAPI(cmd.Cmd):
 
     def complete_set_crc32_parameters(self, text, line, start_index, end_index):
         return self._complete_crc(text, 32)
-
 
 def load_json_config(standard_client=None, json_path=None, architecture_spec=None):
     load_json_str(utils.get_json_config(

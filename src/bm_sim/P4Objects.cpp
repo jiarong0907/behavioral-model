@@ -27,6 +27,7 @@
 #include <istream>
 #include <ostream>
 #include <string>
+#include <fstream>
 #include <tuple>
 #include <vector>
 #include <set>
@@ -577,6 +578,19 @@ void add_new_object(std::unordered_map<std::string, T> *map,
                   << "' with name '" << name << "'");
   }
   map->emplace(name, std::move(obj));
+}
+
+template <typename T>
+void replace_exist_object(std::unordered_map<std::string, T> *map,
+                    const std::string &type_name,
+                    const std::string &name, T obj) {
+  auto it = map->find(name);
+  if (it == map->end()) {
+    throw json_exception(
+        EFormat() << "Didn't find the existing table with name '" << name << "'");
+  } else {
+    it->second = std::move(obj);
+  }
 }
 
 template <typename T>
@@ -1441,6 +1455,59 @@ P4Objects::init_actions(const Json::Value &cfg_root) {
   }
 }
 
+void
+P4Objects::add_actions() {
+  std::cout<<"Jiarong: Enter add actions"<<std::endl;
+  Json::Value cfg_root;
+  std::string json_path = "../diff.json";
+  std::ifstream is(json_path, std::ios::in);
+  (is) >> cfg_root;
+
+  DupIdChecker dup_id_checker("action");
+  const Json::Value &cfg_actions = cfg_root["actions"];
+  for (const auto &cfg_action : cfg_actions) {
+    const string action_name = cfg_action["name"].asString();
+    p4object_id_t action_id = cfg_action["id"].asInt();
+    dup_id_checker.add(action_id);
+    std::unique_ptr<ActionFn> action_fn(new ActionFn(
+        action_name, action_id, cfg_action["runtime_data"].size(),
+        object_source_info(cfg_action)));
+
+    const auto &cfg_primitive_calls = cfg_action["primitives"];
+    for (const auto &cfg_primitive_call : cfg_primitive_calls)
+      add_primitive_to_action(cfg_primitive_call, action_fn.get());
+
+    add_action(action_id, std::move(action_fn));
+  }
+}
+
+void
+P4Objects::replace_actions() {
+// P4Objects::replace_actions(const Json::Value &cfg_root) {
+  std::cout<<"Jiarong: Enter replace actions"<<std::endl;
+  Json::Value cfg_root;
+  std::string json_path = "../diff.json";
+  std::ifstream is(json_path, std::ios::in);
+  (is) >> cfg_root;
+
+  // DupIdChecker dup_id_checker("action");
+  const Json::Value &cfg_actions = cfg_root["actions"];
+  for (const auto &cfg_action : cfg_actions) {
+    const string action_name = cfg_action["name"].asString();
+    p4object_id_t action_id = cfg_action["id"].asInt();
+    std::cout << action_name << "   " << action_id << std::endl;
+
+    std::unique_ptr<ActionFn> action_fn(new ActionFn(
+        action_name, action_id, cfg_action["runtime_data"].size(),
+        object_source_info(cfg_action)));
+    const auto &cfg_primitive_calls = cfg_action["primitives"];
+    for (const auto &cfg_primitive_call : cfg_primitive_calls)
+      add_primitive_to_action(cfg_primitive_call, action_fn.get());
+
+    add_action(action_id, std::move(action_fn));
+  }
+}
+
 namespace {
 
 int get_table_size(const Json::Value &cfg_table) {
@@ -1977,6 +2044,394 @@ P4Objects::init_pipelines(const Json::Value &cfg_root,
 }
 
 void
+P4Objects::replace_tables(LookupStructureFactory *lookup_factory) {
+
+  // auto &direct_meters = init_state->direct_meters;
+
+  std::cout<<"Jiarong: Enter replace tables"<<std::endl;
+  Json::Value cfg_root;
+  std::string json_path = "../diff.json";
+  std::ifstream is(json_path, std::ios::in);
+  (is) >> cfg_root;
+
+  DupIdChecker dup_id_checker_table("table");
+  const Json::Value &cfg_tables = cfg_root["tables"];
+  for (const auto &cfg_table : cfg_tables) {
+    const string table_name = cfg_table["name"].asString();
+    p4object_id_t table_id = cfg_table["id"].asInt();
+    dup_id_checker_table.add(table_id);
+
+    MatchKeyBuilder key_builder;
+    const Json::Value &cfg_match_key = cfg_table["key"];
+
+    auto add_f = [this, &key_builder](
+        const Json::Value &cfg_f) {
+      const Json::Value &cfg_key_field = cfg_f["target"];
+      const string header_name = cfg_key_field[0].asString();
+      header_id_t header_id = get_header_id_cfg(header_name);
+      const string field_name = cfg_key_field[1].asString();
+      int field_offset = get_field_offset(header_id, field_name);
+      const auto mtype = match_name_to_match_type(
+          cfg_f["match_type"].asString());
+      const std::string name = cfg_f.isMember("name") ?
+        cfg_f["name"].asString() :
+        std::string(header_name + "." + field_name);
+      if ((!cfg_f.isMember("mask")) || cfg_f["mask"].isNull()) {
+        key_builder.push_back_field(header_id, field_offset,
+                                    get_field_bits(header_id, field_offset),
+                                    mtype, name);
+      } else {
+        const Json::Value &cfg_key_mask = cfg_f["mask"];
+        key_builder.push_back_field(header_id, field_offset,
+                                    get_field_bits(header_id, field_offset),
+                                    ByteContainer(cfg_key_mask.asString()),
+                                    mtype, name);
+      }
+    };
+
+    // sanity checking, really necessary?
+    bool has_lpm = false;
+    for (const auto &cfg_key_entry : cfg_match_key) {
+      const string match_type = cfg_key_entry["match_type"].asString();
+      if (match_type == "lpm") {
+        if (has_lpm) {
+          throw json_exception(
+              EFormat() << "Table '" << table_name
+                        << "' features 2 LPM match fields",
+              cfg_match_key);
+        }
+        has_lpm = true;
+      }
+    }
+
+    for (const auto &cfg_key_entry : cfg_match_key) {
+      const string match_type = cfg_key_entry["match_type"].asString();
+      if (match_type == "valid") {
+        const Json::Value &cfg_key_field = cfg_key_entry["target"];
+        const string header_name = cfg_key_field.asString();
+        header_id_t header_id = get_header_id_cfg(header_name);
+        const std::string name = cfg_key_entry.isMember("name") ?
+            cfg_key_entry["name"].asString() : header_name;
+        key_builder.push_back_valid_header(header_id, name);
+      } else {
+        add_f(cfg_key_entry);
+      }
+    }
+
+    const string match_type = cfg_table["match_type"].asString();
+    const string table_type = cfg_table["type"].asString();
+    const int table_size = get_table_size(cfg_table);
+    const Json::Value false_value(false);
+    // if attribute is missing, default is false
+    const bool with_counters =
+      cfg_table.get("with_counters", false_value).asBool();
+    const bool with_ageing =
+      cfg_table.get("support_timeout", false_value).asBool();
+
+    // TODO(antonin): improve this to make it easier to create new kind of
+    // tables e.g. like the register mechanism for primitives :)
+    std::unique_ptr<MatchActionTable> table;
+    if (table_type == "simple") {
+      table = MatchActionTable::create_match_action_table<MatchTable>(
+        match_type, table_name, table_id, table_size, key_builder,
+        with_counters, with_ageing, lookup_factory);
+    } else if (table_type == "indirect" || table_type == "indirect_ws") {
+      bool with_selection = (table_type == "indirect_ws");
+      if (table_type == "indirect") {
+        table =
+            MatchActionTable::create_match_action_table<MatchTableIndirect>(
+                match_type, table_name, table_id, table_size, key_builder,
+                with_counters, with_ageing, lookup_factory);
+      } else {
+        table =
+            MatchActionTable::create_match_action_table<MatchTableIndirectWS>(
+                match_type, table_name, table_id, table_size, key_builder,
+                with_counters, with_ageing, lookup_factory);
+      }
+      // static_cast valid even when table is indirect_ws
+      auto mt_indirect = static_cast<MatchTableIndirect *>(
+          table->get_match_table());
+      ActionProfile *action_profile = nullptr;
+      if (cfg_table.isMember("action_profile")) {
+        action_profile = get_action_profile_cfg(
+            cfg_table["action_profile"].asString());
+      } else if (cfg_table.isMember("act_prof_name")) {
+        const auto name = cfg_table["act_prof_name"].asString();
+        action_profile = new ActionProfile(name, table_id, with_selection);
+        add_action_profile(
+            name, std::unique_ptr<ActionProfile>(action_profile));
+      } else {
+        throw json_exception("indirect tables need to have attribute "
+                              "'action_profile' (new JSON format) or "
+                              "'act_prof_name' (old JSON format)\n",
+                              cfg_table);
+      }
+      mt_indirect->set_action_profile(action_profile);
+
+      if (table_type == "indirect_ws"
+          && !cfg_table.isMember("action_profile")) {
+        assert(cfg_table.isMember("selector"));
+        auto calc = process_cfg_selector(cfg_table["selector"]);
+        action_profile->set_hash(std::move(calc));
+      }
+    } else {
+      throw json_exception(
+          EFormat() << "Invalid table type '" << table_type << "'",
+          cfg_table);
+    }
+
+    // TODO: maintains backwards compatibility
+    // if (cfg_table.isMember("direct_meters") &&
+    //     !cfg_table["direct_meters"].isNull()) {
+    //   const std::string meter_name = cfg_table["direct_meters"].asString();
+    //   const DirectMeterArray &direct_meter = direct_meters[meter_name];
+    //   table->get_match_table()->set_direct_meters(
+    //       direct_meter.meter, direct_meter.header, direct_meter.offset);
+    // }
+
+    if (with_ageing) ageing_monitor->add_table(table->get_match_table());
+
+    auto it = match_action_tables_map.find(table_name);
+    if (it == match_action_tables_map.end()) {
+      add_match_action_table(table_name, std::move(table));
+    } else {
+      replace_match_action_table(table_name, std::move(table));
+    }
+  }
+
+  // pipelines -> conditionals
+
+  DupIdChecker dup_id_checker_condition("condition");
+  const auto &cfg_conditionals = cfg_root["conditionals"];
+  for (const auto &cfg_conditional : cfg_conditionals) {
+    const string conditional_name = cfg_conditional["name"].asString();
+    p4object_id_t conditional_id = cfg_conditional["id"].asInt();
+    auto conditional = new Conditional(
+      conditional_name, conditional_id, object_source_info(cfg_conditional));
+    const auto &cfg_expression = cfg_conditional["expression"];
+    build_expression(cfg_expression, conditional);
+    conditional->build();
+
+    auto it = conditionals_map.find(conditional_name);
+    if (it == conditionals_map.end()) {
+      dup_id_checker_condition.add(conditional_id);
+      add_conditional(conditional_name, unique_ptr<Conditional>(conditional));
+    } else {
+      replace_conditional(conditional_name, unique_ptr<Conditional>(conditional));
+    }
+  }
+
+  // next node resolution for tables
+
+  for (const auto &cfg_table : cfg_tables) {
+    const string table_name = cfg_table["name"].asString();
+    std::cout<<"Jiarong: table_name = "<<table_name<<std::endl;
+    MatchTableAbstract *table = get_abstract_match_table(table_name);
+
+    const Json::Value &cfg_next_nodes = cfg_table["next_tables"];
+
+    auto get_next_node = [this](const Json::Value &cfg_next_node)
+        -> const ControlFlowNode *{
+      if (cfg_next_node.isNull())
+        return nullptr;
+      return get_control_node_cfg(cfg_next_node.asString());
+    };
+
+    std::string act_prof_name("");
+    if (cfg_table.isMember("action_profile")) {  // new JSON format
+      act_prof_name = cfg_table["action_profile"].asString();
+    } else if (cfg_table.isMember("act_prof_name")) {
+      act_prof_name = cfg_table["act_prof_name"].asString();
+    }
+
+    std::string actions_key = cfg_table.isMember("action_ids") ? "action_ids"
+        : "actions";
+    const Json::Value &cfg_actions = cfg_table[actions_key];
+    for (const auto &cfg_action : cfg_actions) {
+      p4object_id_t action_id = 0;
+      string action_name = "";
+      ActionFn *action = nullptr;
+      if (actions_key == "action_ids") {
+        action_id = cfg_action.asInt();
+        action = get_action_by_id(action_id); assert(action);
+        action_name = action->get_name();
+      } else {
+        action_name = cfg_action.asString();
+        action = get_one_action_with_name(action_name); assert(action);
+        action_id = action->get_id();
+      }
+
+      const Json::Value &cfg_next_node = cfg_next_nodes[action_name];
+      const ControlFlowNode *next_node = get_next_node(cfg_next_node);
+      table->set_next_node(action_id, next_node);
+      std::cout<<"Jiarong: table_name = "<<table_name<<" action_name = "<<action_name<<std::endl;
+      if (get_action_rt(table_name, action_name)==nullptr){
+        add_action_to_table(table_name, action_name, action);
+      }
+      if (act_prof_name != "")
+        add_action_to_act_prof(act_prof_name, action_name, action);
+    }
+
+    if (cfg_next_nodes.isMember("__HIT__"))
+      table->set_next_node_hit(get_next_node(cfg_next_nodes["__HIT__"]));
+    if (cfg_next_nodes.isMember("__MISS__"))
+      table->set_next_node_miss(get_next_node(cfg_next_nodes["__MISS__"]));
+
+    if (cfg_table.isMember("base_default_next")) {
+      table->set_next_node_miss_default(
+          get_next_node(cfg_table["base_default_next"]));
+    }
+
+    // for 'simple' tables, it is possible to specify a default action or a
+    // default action with some default action data. It is also specify to
+    // choose if the default action is "const", meaning it cannot be changed
+    // by the control plane; or if the default entry (action + action data) is
+    // "const".
+    // note that this code has to be placed after setting the next nodes, as
+    // it may call MatchTable::set_default_action.
+    if (cfg_table.isMember("default_entry")) {
+      const auto table_type = cfg_table["type"].asString();
+
+      const auto &cfg_default_entry = cfg_table["default_entry"];
+      const p4object_id_t action_id = cfg_default_entry["action_id"].asInt();
+      const ActionFn *action = get_action_by_id(action_id); assert(action);
+
+      const Json::Value false_value(false);
+      const bool is_action_const =
+          cfg_default_entry.get("action_const", false_value).asBool();
+      if (table_type != "simple" && is_action_const) {
+        throw json_exception(
+            EFormat() << "Table '" << table_name << "' does not have type "
+                      << "'simple' and therefore setting 'action_const' to "
+                      << "true is meaningless",
+            cfg_table);
+      } else if (is_action_const) {
+        auto simple_table = dynamic_cast<MatchTable *>(table);
+        assert(simple_table);
+        simple_table->set_const_default_action_fn(action);
+      }
+
+      if (cfg_default_entry.isMember("action_data")) {
+        auto adata = parse_action_data(action,
+                                        cfg_default_entry["action_data"]);
+
+        const bool is_action_entry_const =
+            cfg_default_entry.get("action_entry_const", false_value).asBool();
+
+        table->set_default_default_entry(action, std::move(adata),
+                                          is_action_entry_const);
+      }
+    }
+
+    // for 'simple' tables, it is possible to specify immutable entries
+    if (cfg_table.isMember("entries")) {
+      const auto table_type = cfg_table["type"].asString();
+      if (table_type != "simple") {
+        throw json_exception(
+            EFormat() << "Table '" << table_name << "' does not have type "
+                      << "'simple' and therefore cannot specify a "
+                      << "'entries' attribute",
+            cfg_table);
+      }
+
+      auto simple_table = dynamic_cast<MatchTable *>(table);
+      assert(simple_table);
+
+      const auto &cfg_entries = cfg_table["entries"];
+
+      for (const auto &cfg_entry : cfg_entries) {
+        auto match_key = parse_match_key(cfg_entry["match_key"],
+                                          cfg_table["key"]);
+
+        const auto &cfg_action_entry = cfg_entry["action_entry"];
+        auto action_id = static_cast<p4object_id_t>(
+            cfg_action_entry["action_id"].asInt());
+        const ActionFn *action = get_action_by_id(action_id); assert(action);
+        auto adata = parse_action_data(action,
+                                        cfg_action_entry["action_data"]);
+
+        const auto priority = cfg_entry["priority"].asInt();
+
+        entry_handle_t handle;
+        auto rc = simple_table->add_entry(match_key, action, std::move(adata),
+                                          &handle, priority);
+        if (rc == MatchErrorCode::BAD_MATCH_KEY) {
+          throw json_exception(
+              "Error when adding table entry, match key is malformed",
+              cfg_entry);
+        } else if (rc == MatchErrorCode::DUPLICATE_ENTRY) {
+          // We choose to treat this as an error to be consistent with the
+          // control plane behavior
+          throw json_exception("Duplicate entries in table initializer",
+                                cfg_entries);
+        } else {
+          assert(rc == MatchErrorCode::SUCCESS);
+        }
+        (void) handle;  // we have no need for the handle
+      }
+
+      // this means that the control plane won't be able to modify the entries
+      // at runtime; we need to do this at the end otheriwse the add_entry
+      // calls above would fail.
+      simple_table->set_immutable_entries();
+    }
+  }
+
+  // TODO: pipelines -> control action calls
+  // next node resolution for conditionals
+  for (const auto &cfg_conditional : cfg_conditionals) {
+    auto conditional_name = cfg_conditional["name"].asString();
+    auto conditional = get_conditional(conditional_name);
+
+    const auto &cfg_true_next = cfg_conditional["true_next"];
+    const auto &cfg_false_next = cfg_conditional["false_next"];
+
+    if (!cfg_true_next.isNull()) {
+      auto next_node = get_control_node_cfg(cfg_true_next.asString());
+      conditional->set_next_node_if_true(next_node);
+    }
+    if (!cfg_false_next.isNull()) {
+      auto next_node = get_control_node_cfg(cfg_false_next.asString());
+      conditional->set_next_node_if_false(next_node);
+    }
+  }
+
+  // TODO: next node resolution for control actions
+
+  ControlFlowNode *first_node = nullptr;
+  if (!cfg_root["init_table"].isNull()) {
+    const string first_node_name = cfg_root["init_table"].asString();
+    first_node = get_control_node_cfg(first_node_name);
+  }
+
+  const string pipeline_name = cfg_root["name"].asString();
+  p4object_id_t pipeline_id = cfg_root["id"].asInt();
+  Pipeline *pipeline = new Pipeline(pipeline_name, pipeline_id, first_node);
+  replace_pipeline(pipeline_name, unique_ptr<Pipeline>(pipeline));
+}
+
+void P4Objects::print_all_actions(){
+  for (auto it = actions_map.begin(); it != actions_map.end(); it++) {
+    std::cout<<"action_id = "<<std::to_string(it->first)<<std::endl;
+    std::cout<<"action_name = "<<it->second->get_name()<<std::endl;
+  }
+}
+
+void P4Objects::print_all_tables(){
+  for (auto it = match_action_tables_map.begin(); it != match_action_tables_map.end(); it++) {
+    std::cout<<"table_name = "<<it->first<<std::endl;
+    // std::cout<<"action_name = "<<it->second->get_match_table()<<std::endl;
+  }
+}
+
+void P4Objects::print_all_conditions(){
+  for (auto it = conditionals_map.begin(); it != conditionals_map.end(); it++) {
+    std::cout<<"condition_name = "<<it->first<<std::endl;
+    std::cout<<"next_name = "<<it->second->get_true_next()->get_name()<<std::endl;
+  }
+}
+
+void
 P4Objects::init_checksums(const Json::Value &cfg_root) {
   DupIdChecker dup_id_checker("checksum");
   const Json::Value &cfg_checksums = cfg_root["checksums"];
@@ -2182,10 +2637,19 @@ P4Objects::init_objects(std::istream *is,
 
     init_actions(cfg_root);
 
+    // replace_actions();
+
     ageing_monitor = AgeingMonitorIface::make(
         device_id, cxt_id, notifications_transport);
 
     init_pipelines(cfg_root, lookup_factory, &init_state);
+
+    // add_actions();
+    // print_all_actions();
+    // replace_tables(lookup_factory);
+    // print_all_tables();
+
+    print_all_conditions();
 
     init_checksums(cfg_root);
 
@@ -2720,6 +3184,15 @@ P4Objects::add_match_action_table(const std::string &name,
 }
 
 void
+P4Objects::replace_match_action_table(const std::string &name,
+                                  std::unique_ptr<MatchActionTable> table) {
+  replace_control_node(name, table.get());
+  // not really needed as add_control_node enforces a stricter check
+  replace_exist_object(&match_action_tables_map, "match-action table", name,
+                 std::move(table));
+}
+
+void
 P4Objects::add_action_profile(const std::string &name,
                               std::unique_ptr<ActionProfile> action_profile) {
   add_new_object(&action_profiles_map, "action profile", name,
@@ -2740,6 +3213,14 @@ P4Objects::add_conditional(const std::string &name,
 }
 
 void
+P4Objects::replace_conditional(const std::string &name,
+                           std::unique_ptr<Conditional> conditional) {
+  replace_control_node(name, conditional.get());
+  // not really needed as add_control_node enforces a stricter check
+  replace_exist_object(&conditionals_map, "condition", name, std::move(conditional));
+}
+
+void
 P4Objects::add_control_action(const std::string &name,
                               std::unique_ptr<ControlAction> control_action) {
   add_control_node(name, control_action.get());
@@ -2751,6 +3232,11 @@ P4Objects::add_control_node(const std::string &name, ControlFlowNode *node) {
   add_new_object(&control_nodes_map, "control node", name, node);
 }
 
+void
+P4Objects::replace_control_node(const std::string &name, ControlFlowNode *node) {
+  replace_exist_object(&control_nodes_map, "control node", name, node);
+}
+
 ControlFlowNode *
 P4Objects::get_control_node_cfg(const std::string &name) const {
   return get_object(control_nodes_map, "control node", name);
@@ -2760,6 +3246,12 @@ void
 P4Objects::add_pipeline(const std::string &name,
                         std::unique_ptr<Pipeline> pipeline) {
   add_new_object(&pipelines_map, "pipeline", name, std::move(pipeline));
+}
+
+void
+P4Objects::replace_pipeline(const std::string &name,
+                        std::unique_ptr<Pipeline> pipeline) {
+  replace_exist_object(&pipelines_map, "pipeline", name, std::move(pipeline));
 }
 
 void

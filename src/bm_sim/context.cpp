@@ -75,6 +75,22 @@ Context::mt_add_entry(const std::string &table_name,
 }
 
 MatchErrorCode
+Context::mt_add_table(const std::string &table_name,
+                      LookupStructureFactory *lookup_factory) {
+  // boost::shared_lock<boost::shared_mutex> lock(request_mutex);
+  p4objects_rt->add_actions();
+  p4objects_rt->replace_tables(lookup_factory);
+  return MatchErrorCode::SUCCESS;
+  // if (!abstract_table) return MatchErrorCode::INVALID_TABLE_NAME;
+  // auto table = dynamic_cast<MatchTable *>(abstract_table);
+  // if (!table) return MatchErrorCode::WRONG_TABLE_TYPE;
+  // const ActionFn *action = p4objects_rt->get_action_rt(table_name, action_name);
+  // if (!action) return MatchErrorCode::INVALID_ACTION_NAME;
+  // return table->add_entry(
+  //   match_key, action, std::move(action_data), handle, priority);
+}
+
+MatchErrorCode
 Context::mt_set_default_action(const std::string &table_name,
                                const std::string &action_name,
                                ActionData action_data) {
